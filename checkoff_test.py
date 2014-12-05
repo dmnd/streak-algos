@@ -190,7 +190,6 @@ class Checkoff(streaks.StreakAlgo):
             logging.info("Ignoring {} as it's before {}".format(
                 current, self.interval_end))
 
-    # TODO: get rid of tzoffset, use client_dt instead
     def streak_length(self, tzoffset=None):
         if tzoffset is None:
             # This happens when someone other than the user is looking at the
