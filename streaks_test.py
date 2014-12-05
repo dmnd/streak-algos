@@ -196,11 +196,6 @@ class StreakTestMixin(object):
         self.record_activity(_dt("Mon 23:00") + datetime.timedelta(hours=-13))
         self.assert_streak(0)
 
-    def test_out_of_order_activity(self):
-        # What happens if the user manipulates their clock such that events
-        # arrive out of order? TODO(dmnd): it is to be done
-        pass
-
     def test_nz_to_hawaii(self):
         # user does work in New Zealand
         self.user.set_utc("Mon 12:00")
@@ -212,9 +207,11 @@ class StreakTestMixin(object):
         self.user.set_utc("Mon 13:00")
         self.assert_streak(1)
 
-        # now do some work
+        # Now do some work.
         self.record_activity("Mon 03:00")  # Hawaii is UTC-10
-        self.assert_streak(1)
+        # Even though it's Monday here, Tuesday has already been marked off, so
+        # the streak length is 2.
+        self.assert_streak(2)
 
     def test_nz_to_hawaii_slow(self):
         # TODO(dmnd): convert this to a class?
@@ -240,37 +237,39 @@ class StreakTestMixin(object):
         self.record_activity(nztime)
         self.assert_streak(1, inconclusive=True)
 
-        # Now the user's clock updates to Hawaii timezone, where it's actually
-        # only Tuesday:
+        # Now the user's clock updates to the Hawaii timezone, where it's
+        # actually only Tuesday:
         hioffset = datetime.timedelta(hours=-12)
         hitime = utc_dt + hioffset
         self.assert_weekday(hitime, "Tue", inconclusive=True)
         # When he does more work, the streak should be continued, even though
         # it was broken earlier.
         self.record_activity(hitime)
-        self.assert_streak(2)
+        self.assert_streak(3)
 
     def test_hawaii_to_nz(self):
         # user does work in Hawaii
-        self.user.set_utc("Mon 12:00")
-        self.record_activity("Mon 02:00")
+        hitime = _dt("Mon 23:59")
+        hioffset = datetime.timedelta(hours=-12)
+        utc_dt = hitime - hioffset
+        self.assert_weekday(utc_dt, "Tue", inconclusive=True)
+        self.user.set_utc(utc_dt)
+        self.record_activity(hitime)
         self.assert_streak(1, inconclusive=True)
 
         # user gets on plane, flies to New Zealand
         # be conservative and pretend he gets there in only 1 hour
-        # self.user.set_utc("Mon 13:00")
-        # self.assert_streak(1, inconclusive=True)
-        #
-        # # now do some work
-        # self.record_activity("Tue 02:00")
-        # self.assert_streak(2)
+        utc_dt += datetime.timedelta(hours=1)
+        self.user.set_utc(utc_dt)
 
-    def test_something_else(self):
-        # user does work
-        # user sets clock way forward
-        # user does more work, streak is extended I guess
-        # user sets clock back again
-        pass
+        # now do some work
+        nzoffset = datetime.timedelta(hours=+13)
+        nztime = utc_dt + nzoffset
+        self.assert_weekday(nztime, "Wed", inconclusive=True)
+
+        # The streak is only one day long, because the user missed out on Tue!
+        self.record_activity(nztime)
+        self.assert_streak(1)
 
 
 class Cooldown(StreakAlgo):
@@ -388,6 +387,10 @@ def easyrepr(obj, attrs=[], sep=', '):  # pylint: disable-msg=W0102
     return "%s(%s)" % (obj.__class__.__name__, attrs)
 
 
+import collections
+LocalTime = collections.namedtuple("LocalTime", "dt tz")
+
+
 class Checkoff(StreakAlgo):
     """Similar to interval extension, but pays attention to days.
 
@@ -402,45 +405,15 @@ class Checkoff(StreakAlgo):
 
     def __init__(self):
         super(Checkoff, self).__init__()
-        self.interval_end_utc = _DT_MIN
-        self.interval_end_tz = datetime.timedelta(0)
-
-        self.interval_start_utc = _DT_MIN
-        self.interval_start_tz = datetime.timedelta(0)
-
+        self.interval_start = LocalTime(dt=_DT_MIN, tz=_ZERO)
+        self.interval_end = LocalTime(dt=_DT_MIN, tz=_ZERO)
         self.previous_interval = None
 
     def __repr__(self):
         return easyrepr(self, [
-            "interval_start_utc",
-            "interval_start_tz",
-            "interval_start_local",
-            "interval_end_utc",
-            "interval_end_tz",
-            "interval_end_local",
+            "interval_start",
+            "interval_end",
             "previous_interval"], sep=',\n')
-
-    @property
-    def interval_start_local(self):
-        return as_local(self.interval_start_utc, self.interval_start_tz)
-
-    @interval_start_local.setter
-    def interval_start_local_setter(self, x):
-        self.interval_end_utc = x.astimezone(pytz.utc).replace(tzinfo=None)
-        self.interval_end_tz = x.tzinfo.utcoffset(x)
-
-    @property
-    def interval_end_local(self):
-        return as_local(self.interval_end_utc, self.interval_end_tz)
-
-    @interval_end_local.setter
-    def interval_end_local_setter(self, x):
-        self.interval_end_utc = x.astimezone(pytz.utc).replace(tzinfo=None)
-        self.interval_end_tz = x.tzinfo.utcoffset(x)
-
-    @property
-    def previous_interval_local(self):
-        return tuple(as_local(t, tz) for t, tz in self.previous_interval)
 
     def validate_client_dt(self, untrusted_tzoffset):
         """Clamp the client's reported timezone offset to something sane.
@@ -481,7 +454,7 @@ class Checkoff(StreakAlgo):
     def record_activity(self, untrusted_client_dt):
         untrusted_tzoffset = untrusted_client_dt - self.server_dt_utc
         if self.validate_client_dt(untrusted_tzoffset):
-            tzoffset = untrusted_tzoffset
+            current = LocalTime(dt=untrusted_client_dt, tz=untrusted_tzoffset)
         else:
             logging.warning(
                 "Ignoring activity because we don't trust the timezone offset")
@@ -497,15 +470,8 @@ class Checkoff(StreakAlgo):
         # local time, not UTC, so it's possible we need to adjust the start
         # date of an existing streak interval.
 
-        new_local = as_local(self.server_dt_utc, tzoffset)
-        print "ordering"
-        print "old: {!r}".format(self.interval_start_local)
-        print "new: {!r}".format(new_local)
-        print "test: {!r}".format(new_local < self.interval_start_local)
-        print
-        if (self.interval_start_utc is not _DT_MIN and  # cant call _local
-                new_local < self.interval_start_local):
-            print "out of order event!"
+        if current.dt < self.interval_start.dt:
+            logging.info("Out of order event")
             # Now we have 2 options, because it's possible the new local time
             # is far enough back in time that a previous ended streak will now
             # that ended will now be coniguous. E.g:
@@ -537,63 +503,63 @@ class Checkoff(StreakAlgo):
             #     ---------------
             #
             # This next bit of code decides between (a) and (b).
-            l = interval_length(self.previous_interval_local[1], new_local)
-            if l <= 2:  # case (a) above; merge
-                # overwrite the start of the interval to the previous one
-                # self.interval_start_local = self.previous_interval[0]
-                self.interval_start_utc = self.previous_interval[0][0]
-                self.interval_start_tz = self.previous_interval[0][1]
-
-                # now set the end of the interval to whichever is later of:
-                #   1. the current event
-                #   2. the end of the previous interval
-                # self.interval_end_local = max(
-                #   new_local, self.previous_interval_local)
-
-                if new_local > self.previous_interval_local[1]:
-                    self.interval_end_utc = new_local - tzoffset
-                    self.interval_end_tz = tzoffset
+            merged = None
+            if self.previous_interval is not None:
+                l = interval_length(self.previous_interval[1].dt, current.dt)
+                if l < 0:
+                    # the new event is arriving before the close of the
+                    # previous event! There's no good way to handle this, but
+                    # it should be impossible anyway, so raise an exception.
+                    raise ValueError("time travel")
+                elif l <= 2:
+                    # Case (a) above: merge with previous interval.
+                    self.interval_start = self.previous_interval[0]
+                    if self.interval_end.dt < self.previous_interval[1].dt:
+                        self.interval_end = self.previous_interval
+                    self.previous_interval = None
+                    merged = True
                 else:
-                    self.interval_end_utc = self.previous_interval[1][0]
-                    self.interval_end_tz = self.previous_interval[1][1]
+                    # The new event isn't close enough to the previous one to
+                    # matter. Just grow the current interval backward.
+                    merged = False
+            else:
+                merged = False
 
-                self.previous_interval = None
+            if not merged:
+                # Case (b) above: grow interval backward.
+                self.interval_start = current
 
-            else:  # case (b) above; extend
-                # self.interval_start_local = new_local
-                self.interval_start_utc = self.server_dt_utc
-                self.interval_start_tz = tzoffset
+        elif self.has_reset(current.tz):
+            # Save the last streak interval (TODO: get this from the calendar)
+            if self.interval_start.dt is not _DT_MIN:
+                self.previous_interval = (self.interval_start,
+                                          self.interval_end)
+            self.interval_start = current
 
-        # TODO: it's likely impossible to need to reset after an out of
-        # order event, so change this to elif
-        if self.has_reset(tzoffset):
-            # save the last streak interval (TODO: get this from the calendar)
-            self.previous_interval = (
-                (self.interval_start_utc, self.interval_start_tz),
-                (self.interval_end_utc, self.interval_end_tz))
-            self.interval_start_utc = self.server_dt_utc
-            self.interval_start_tz = tzoffset
-
-        self.interval_end_utc = self.server_dt_utc
-        self.interval_end_tz = tzoffset
+        # Extend the current interval if needed
+        if current.dt > self.interval_end.dt:
+            self.interval_end = current
+        else:
+            logging.info("Ignoring {} as it's before {}".format(
+                current, self.interval_end))
 
     def streak_length(self, tzoffset=None):
         if tzoffset is None:
             # This happens when someone other than the user is looking at the
             # streak. Use whatever the user last reported.
-            tzoffset = self.interval_end_tz
+            tzoffset = self.interval_end.tz
 
         if self.has_reset(tzoffset):
             return 0
 
-        l = interval_length(self.interval_start_local, self.interval_end_local)
+        l = interval_length(self.interval_start.dt, self.interval_end.dt)
         if l < 0:
             print self
         return l
 
     def has_reset(self, tzoffset):
-        interval = interval_length(self.interval_end_local,
-                                   as_local(self.server_dt_utc, tzoffset))
+        interval = interval_length(self.interval_end.dt,
+                                   self.server_dt_utc + tzoffset)
         return interval > 2
 
 
