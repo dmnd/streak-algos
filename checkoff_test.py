@@ -3,39 +3,12 @@ import datetime
 import logging
 import unittest
 
-import pytz
-
 import util
 import streaks
 
 
 LocalTime = collections.namedtuple("LocalTime", "dt tz")
 _ZERO = datetime.timedelta(0)
-
-
-class LocalTimezone(datetime.tzinfo):
-    """A wrapper for a datetime.timedelta"""
-
-    def __init__(self, offset):  # pylint: disable-msg=W0231
-        if not isinstance(offset, datetime.timedelta):
-            raise ValueError()
-        self.offset = offset
-
-    def __repr__(self):
-        return util.easyrepr(self, ["offset"])
-
-    def utcoffset(self, dt):  # pylint: disable-msg=W0613
-        return self.offset
-
-    def tzname(self, dt):  # pylint: disable-msg=W0613
-        return self.__class__
-
-    def dst(self, dt):  # pylint: disable-msg=W0613
-        return _ZERO
-
-
-def as_local(utc, tzoffset):
-    return utc.replace(tzinfo=pytz.utc).astimezone(tz=LocalTimezone(tzoffset))
 
 
 class Checkoff(streaks.StreakAlgo):
