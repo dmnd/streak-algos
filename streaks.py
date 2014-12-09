@@ -2,15 +2,11 @@
 
 # This file is a bit strange, a lot of tests are "expected" to fail because the
 # algorithm they use is too simple. But this is confusing because nothing
-# records which tests are supposed to fail. So, for now, know that 19 tests
-# should fail.
+# records which tests are supposed to fail.
 #
 # All CheckoffTest tests should pass though, because it's an algorithm that
 # works in all circumstances (but has the drawback that it needs to deal with
 # user timezones).
-#
-# TODO: warning! we need to record both last_activity for historical reasons
-# but also (interval_end, tz), because they are different things!!
 
 
 """Testing out different streak algorithms"""
