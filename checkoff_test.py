@@ -71,8 +71,15 @@ class Checkoff(streaks.StreakAlgo):
 
         return tz_offset_min <= untrusted_tzoffset <= tz_offset_max
 
-    def record_activity(self, untrusted_client_dt):
-        untrusted_tzoffset = untrusted_client_dt - self.server_dt_utc
+    def record_activity(self, untrusted_client_dt, utc_dt):
+        # Events should always arrive in order from the perspective of UTC.
+        if utc_dt < self.interval_end.dt - self.interval_end.tz:
+            logging.warning(
+                "Ignoring stale event. "
+                "updated_utc: %s, utc_dt: %s", self.updated_utc, utc_dt)
+            return
+
+        untrusted_tzoffset = untrusted_client_dt - utc_dt
         if self.validate_client_dt(untrusted_tzoffset):
             current = LocalTime(dt=untrusted_client_dt, tz=untrusted_tzoffset)
         else:
@@ -149,7 +156,7 @@ class Checkoff(streaks.StreakAlgo):
                 # Case (b) above: grow interval backward.
                 self.interval_start = current
 
-        elif self.has_reset(current.tz):
+        elif self.has_reset(current.dt):
             # Save the last streak interval (TODO: get this from the calendar)
             if self.interval_start.dt is not streaks.DT_MIN:
                 self.previous_interval = (self.interval_start,
@@ -163,21 +170,17 @@ class Checkoff(streaks.StreakAlgo):
             logging.info("Ignoring {} as it's before {}".format(
                 current, self.interval_end))
 
-    def streak_length(self, tzoffset=None):
-        if tzoffset is None:
-            # This happens when someone other than the user is looking at the
-            # streak. Use whatever the user last reported.
-            tzoffset = self.interval_end.tz
-
-        if self.has_reset(tzoffset):
+    def streak_length(self, basis_dt):
+        if self.has_reset(basis_dt):
             return 0
 
         return interval_length(self.interval_start.dt, self.interval_end.dt)
 
-    def has_reset(self, tzoffset):
-        l = interval_length(self.interval_end.dt,
-                            self.server_dt_utc + tzoffset)
-        return l > 2
+    def has_reset(self, basis_dt):
+        print 'has_reset'
+        print self.interval_end.dt
+        print basis_dt
+        return interval_length(self.interval_end.dt, basis_dt) > 2
 
 
 def interval_length(t1, t2):
@@ -196,4 +199,5 @@ class CheckoffTest(unittest.TestCase, streaks.StreakTestMixin):
         return self._user
 
     def setUp(self):
+        streaks.StreakTestMixin.setUp(self)
         self._user = Checkoff()

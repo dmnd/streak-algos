@@ -60,43 +60,47 @@ class InconclusiveTestError(Exception):
 
 
 class StreakAlgo(object):
-
-    def __init__(self):
-        self.server_dt_utc = DT_MIN
-        self.set_utc("Mon 00:00")
-
-    def set_utc(self, s):
-        self.server_dt_utc = dt_from_str(s)
-
     @abc.abstractmethod
     def record_activity(self, untrusted_client_dt):
         pass
 
     @abc.abstractmethod
-    def streak_length(self, tzoffset=None):
+    def streak_length(self, basis_dt):
         pass
 
 
 class StreakTestMixin(object):
 
+    def setUp(self):
+        self.advance_utc_time("Mon 00:00")
+
     @abc.abstractproperty
     def user(self):
         raise Exception()
 
-    def record_activity_at_utc(self, utc_dt_or_str):
-        utc_dt = dt_from_str(utc_dt_or_str)
-        self.user.server_dt_utc = utc_dt
-        self.record_activity(utc_dt)
+    def advance_utc_time(self, utc_dt_or_str):
+        """Also sets local_dt.
+
+        Used for advancing time without recording activity.
+        """
+        dt = _dt(utc_dt_or_str)
+        self.local_dt = dt
+        self.utc_dt = dt
 
     def record_activity(self, client_dt_or_str):
-        self.user.record_activity(dt_from_str(client_dt_or_str))
+        self.local_dt = dt_from_str(client_dt_or_str)
+        self.user.record_activity(self.local_dt, self.utc_dt)
+
+    def set_utc_then_record_activity(self, utc_dt_or_str):
+        self.advance_utc_time(utc_dt_or_str)
+        self.record_activity(utc_dt_or_str)
 
     def assert_streak(self, x, inconclusive=False):
         if inconclusive:
-            if self.user.streak_length() != x:
+            if self.user.streak_length(self.local_dt) != x:
                 raise InconclusiveTestError()
         else:
-            self.assertEqual(self.user.streak_length(), x)
+            self.assertEqual(self.user.streak_length(self.local_dt), x)
 
     def assert_weekday(self, dt, weekday, inconclusive=False):
         if not inconclusive:
@@ -113,96 +117,97 @@ class StreakTestMixin(object):
             raise InconclusiveTestError()
 
     def test_initial(self):
+        print self.user
         self.assert_streak(0)
 
     def test_leading_edge(self):
-        self.record_activity_at_utc("Mon 07:00")
+        self.set_utc_then_record_activity("Mon 07:00")
         self.assert_streak(1)
 
     def test_leading_edge_tz(self):
-        self.user.set_utc("Mon 12:00")
+        self.advance_utc_time("Mon 12:00")
         self.record_activity("Mon 02:00")
         self.assert_streak(1)
 
     def test_streak_is_hot_next_day_after(self):
-        self.record_activity_at_utc("Mon 07:00")
-        self.user.set_utc("Tue 12:00")
+        self.set_utc_then_record_activity("Mon 07:00")
+        self.advance_utc_time("Tue 12:00")
         self.assert_streak(1)
 
     def test_missed_day_then_expired(self):
-        self.record_activity_at_utc("Mon 19:00")
-        self.user.set_utc("Wed 18:00")
+        self.set_utc_then_record_activity("Mon 19:00")
+        self.advance_utc_time("Wed 18:00")
         self.assert_streak(0)
 
     def test_missed_day_then_resume(self):
-        self.record_activity_at_utc("Mon 19:00")
-        self.record_activity_at_utc("Wed 18:00")
+        self.set_utc_then_record_activity("Mon 19:00")
+        self.set_utc_then_record_activity("Wed 18:00")
         self.assert_streak(1)
 
     def test_two_sessions_one_day(self):
-        self.record_activity_at_utc("Mon 06:00")
-        self.record_activity_at_utc("Mon 23:00")
+        self.set_utc_then_record_activity("Mon 06:00")
+        self.set_utc_then_record_activity("Mon 23:00")
         self.assert_streak(1)
 
     def test_increment_next_day_early(self):
-        self.record_activity_at_utc("Mon 11:00")
-        self.record_activity_at_utc("Tue 10:00")
+        self.set_utc_then_record_activity("Mon 11:00")
+        self.set_utc_then_record_activity("Tue 10:00")
         self.assert_streak(2)
 
     def test_increment_next_day_later(self):
-        self.record_activity_at_utc("Mon 11:00")
-        self.record_activity_at_utc("Tue 12:00")
+        self.set_utc_then_record_activity("Mon 11:00")
+        self.set_utc_then_record_activity("Tue 12:00")
         self.assert_streak(2)
 
     def test_increment_maximum_interval(self):
-        self.record_activity_at_utc("Mon 00:01")
-        self.record_activity_at_utc("Tue 23:59")
+        self.set_utc_then_record_activity("Mon 00:01")
+        self.set_utc_then_record_activity("Tue 23:59")
         self.assert_streak(2)
 
     def test_quickest_broken_streak(self):
-        self.record_activity_at_utc("Mon 23:59")
-        self.user.set_utc("Wed 00:01")
+        self.set_utc_then_record_activity("Mon 23:59")
+        self.advance_utc_time("Wed 00:01")
         self.assert_streak(0)
 
     def test_tz_at_utc(self):
         # for someone at UTC, this is a one day streak
-        self.record_activity_at_utc("Mon 01:00")
-        self.record_activity_at_utc("Mon 23:00")
+        self.set_utc_then_record_activity("Mon 01:00")
+        self.set_utc_then_record_activity("Mon 23:00")
         self.assert_streak(1)
 
     def test_tz_at_plus_8(self):
         # for someone at UTC+8, this is actually a two-day streak!
         tzoffset = datetime.timedelta(hours=8)
 
-        self.user.set_utc("Mon 01:00")
+        self.advance_utc_time("Mon 01:00")
         self.record_activity(_dt("Mon 01:00") + tzoffset)
         # (...still monday)
 
-        self.user.set_utc("Mon 23:00")
+        self.advance_utc_time("Mon 23:00")
         self.record_activity(_dt("Mon 23:00") + tzoffset)
         # (...actually Tue 07:00!)
 
         self.assert_streak(2)
 
     def test_reject_futuristic_tz(self):
-        self.user.set_utc("Mon 23:00")
+        self.advance_utc_time("Mon 23:00")
         self.record_activity(_dt("Mon 23:00") + datetime.timedelta(hours=15))
         self.assert_streak(0)
 
     def test_reject_past_tz(self):
-        self.user.set_utc("Mon 23:00")
+        self.advance_utc_time("Mon 23:00")
         self.record_activity(_dt("Mon 23:00") + datetime.timedelta(hours=-13))
         self.assert_streak(0)
 
     def test_nz_to_hawaii(self):
         # user does work in New Zealand
-        self.user.set_utc("Mon 12:00")
+        self.advance_utc_time("Mon 12:00")
         self.record_activity("Tue 01:00")  # NZ is UTC+13
         self.assert_streak(1)
 
         # user gets on plane, flies to Hawaii
         # be conservative and pretend he gets there in only 1 hour
-        self.user.set_utc("Mon 13:00")
+        self.advance_utc_time("Mon 13:00")
         self.assert_streak(1)
 
         # Now do some work.
@@ -218,14 +223,14 @@ class StreakTestMixin(object):
         nzoffset = datetime.timedelta(hours=+13)
         utc_dt = nztime - nzoffset
         self.assert_time_equals(utc_dt, "Mon 10:59", inconclusive=True)
-        self.user.set_utc(utc_dt)
+        self.advance_utc_time(utc_dt)
         self.record_activity(nztime)
         self.assert_streak(1, inconclusive=True)
 
         # User gets on plane, flies to Hawaii.
         # It takes a while to get through security.
         utc_dt += datetime.timedelta(hours=25, minutes=2)
-        self.user.set_utc(utc_dt)
+        self.advance_utc_time(utc_dt)
 
         # Little does the user know, his clock hasn't updated.
         nztime = utc_dt + nzoffset
@@ -251,14 +256,14 @@ class StreakTestMixin(object):
         hioffset = datetime.timedelta(hours=-12)
         utc_dt = hitime - hioffset
         self.assert_weekday(utc_dt, "Tue", inconclusive=True)
-        self.user.set_utc(utc_dt)
+        self.advance_utc_time(utc_dt)
         self.record_activity(hitime)
         self.assert_streak(1, inconclusive=True)
 
         # user gets on plane, flies to New Zealand
         # be conservative and pretend he gets there in only 1 hour
         utc_dt += datetime.timedelta(hours=1)
-        self.user.set_utc(utc_dt)
+        self.advance_utc_time(utc_dt)
 
         # now do some work
         nzoffset = datetime.timedelta(hours=+13)
