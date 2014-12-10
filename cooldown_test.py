@@ -4,7 +4,7 @@ import datetime
 import streaks
 
 
-class Cooldown(streaks.StreakAlgo):
+class Cooldown(streaks.StreakInterface):
 
     def __init__(self, hours, limit):
         super(Cooldown, self).__init__()

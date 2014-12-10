@@ -4,7 +4,7 @@ import unittest
 import streaks
 
 
-class IntervalExtension(streaks.StreakAlgo):
+class IntervalExtension(streaks.StreakInterface):
 
     def __init__(self, hours=48):
         super(IntervalExtension, self).__init__()

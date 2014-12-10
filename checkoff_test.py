@@ -5,13 +5,19 @@ import unittest
 
 import util
 import streaks
+import streaks_test
 
 
-LocalTime = collections.namedtuple("LocalTime", "dt tz")
+# this is useful instead of using datetime.datetime.min because it allows us to
+# add and subtract timezone offsets without throwing RangeError.
+_DT_MIN = datetime.datetime.min + datetime.timedelta(days=3)
 _ZERO = datetime.timedelta(0)
 
 
-class Checkoff(streaks.StreakAlgo):
+LocalTime = collections.namedtuple("LocalTime", "dt tz")
+
+
+class Checkoff(streaks.StreakInterface):
     """Similar to interval extension, but pays attention to days.
 
     This means it's sensitive to timezones, but in return for that extra
@@ -25,8 +31,8 @@ class Checkoff(streaks.StreakAlgo):
 
     def __init__(self):
         super(Checkoff, self).__init__()
-        self.interval_start = LocalTime(dt=streaks.DT_MIN, tz=_ZERO)
-        self.interval_end = LocalTime(dt=streaks.DT_MIN, tz=_ZERO)
+        self.interval_start = LocalTime(dt=_DT_MIN, tz=_ZERO)
+        self.interval_end = LocalTime(dt=_DT_MIN, tz=_ZERO)
         self.previous_interval = None
 
     def __repr__(self):
@@ -158,7 +164,7 @@ class Checkoff(streaks.StreakAlgo):
 
         elif self.has_reset(current.dt):
             # Save the last streak interval (TODO: get this from the calendar)
-            if self.interval_start.dt is not streaks.DT_MIN:
+            if self.interval_start.dt is not _DT_MIN:
                 self.previous_interval = (self.interval_start,
                                           self.interval_end)
             self.interval_start = current
@@ -193,11 +199,11 @@ def interval_length(t1, t2):
         return days - 1
 
 
-class CheckoffTest(unittest.TestCase, streaks.StreakTestMixin):
+class CheckoffTest(unittest.TestCase, streaks_test.StreakTestMixin):
     @property
     def user(self):
         return self._user
 
     def setUp(self):
-        streaks.StreakTestMixin.setUp(self)
+        streaks_test.StreakTestMixin.setUp(self)
         self._user = Checkoff()
